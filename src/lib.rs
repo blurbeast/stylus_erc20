@@ -6,6 +6,8 @@
 extern crate alloc;
 
 mod erc20;
+mod ierc20;
+
 use alloc::vec::Vec;
 
 use stylus_sdk::{alloy_primitives::U256, prelude::*};
