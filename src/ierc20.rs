@@ -4,7 +4,8 @@ use alloy_primitives::Address;
 use stylus_sdk::ArbResult;
 
 pub trait IERC20 {
-    fn init(&mut self, name: String, symbol: String, initial_supply: u128) ->Result<bool, Vec<u8>>;
+    fn init(&mut self, name: String, symbol: String, initial_supply: u128)
+    -> Result<bool, Vec<u8>>;
     fn name(&self) -> String;
     fn symbol(&self) -> String;
     fn decimals(&self) -> u8;

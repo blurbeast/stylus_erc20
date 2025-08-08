@@ -1,12 +1,16 @@
-
+use crate::errors::{InsufficientAllowance, InsufficientBalance, TransferToSelfOrZeroAddress, ZeroAmount};
 use crate::{errors, ierc20};
-use alloc::string::{String, };
+use alloc::string::String;
 use alloc::vec::Vec;
-use ierc20::IERC20;
+use alloy_primitives::U160;
 use errors::ERC20Errors;
+use ierc20::IERC20;
 use stylus_sdk::storage::{StorageAddress, StorageMap, StorageString, StorageU256};
-use stylus_sdk::{alloy_primitives::{Address, U256}, prelude::*, ArbResult};
-use crate::errors::{InsufficientAllowance, InsufficientBalance};
+use stylus_sdk::{
+    ArbResult,
+    alloy_primitives::{Address, U256},
+    prelude::*,
+};
 
 #[storage]
 pub struct ERC20 {
@@ -20,12 +24,16 @@ pub struct ERC20 {
 
 #[public]
 impl IERC20 for ERC20 {
-
-    fn init(&mut self, name: String, symbol: String, initial_supply: u128) -> Result<bool, Vec<u8>> {
-            self.name.set_str(name);
-            self.symbol.set_str(symbol);
-            self._mint(self.vm().msg_sender(), U256::from(initial_supply));
-            self.owner.set(self.vm().msg_sender());
+    fn init(
+        &mut self,
+        name: String,
+        symbol: String,
+        initial_supply: u128,
+    ) -> Result<bool, Vec<u8>> {
+        self.name.set_str(name);
+        self.symbol.set_str(symbol);
+        self._mint(self.vm().msg_sender(), U256::from(initial_supply));
+        self.owner.set(self.vm().msg_sender());
         Ok(true)
     }
 
@@ -54,25 +62,42 @@ impl IERC20 for ERC20 {
     }
 
     fn transfer(&mut self, to: Address, value: u128) -> ArbResult {
+        self._check_zero_transaction(value.try_into().unwrap()).ok_or(self._throw_zero_amount())?;
         let from: Address = self.vm().msg_sender();
+        self._compare_addresses(from, to).ok_or(self._throw_address_error())?;
         let bal: U256 = self._balance(from);
-        self._check_balance(bal, value.try_into().unwrap()).ok_or(self._throw_insufficient_balance(from, value.try_into().unwrap()))?;
+        self._check_balance(bal, value.try_into().unwrap())
+            .ok_or(self._throw_insufficient_balance(from, value.try_into().unwrap()))?;
         self._transfer(from, bal, to, value.try_into().unwrap());
         Ok(vec![true.into()])
     }
 
-    fn transfer_from(&mut self, owner: Address, to: Address, value: u128) ->ArbResult {
+    fn transfer_from(&mut self, owner: Address, to: Address, value: u128) -> ArbResult {
+        self._check_zero_transaction(value.try_into().unwrap()).ok_or(self._throw_zero_amount())?;
+        self._compare_addresses(owner, to).ok_or(self._throw_address_error())?;
         let spender: Address = self.vm().msg_sender();
         let allowance: U256 = self._get_allowance(owner, spender);
 
-        if self._check_allowance(allowance, U256::from(value)).is_none(){
-            return Err(self._throw_insufficient_allowance(spender, allowance).try_into().unwrap());
+        if self
+            ._check_allowance(allowance, U256::from(value))
+            .is_none()
+        {
+            return Err(self
+                ._throw_insufficient_allowance(spender, allowance)
+                .try_into()
+                .unwrap());
         }
 
         let owner_balance = self.balance.get(owner);
 
-        if self._check_balance(owner_balance, value.try_into().unwrap()).is_none() {
-            return Err(self._throw_insufficient_balance(owner,  allowance).try_into().unwrap());
+        if self
+            ._check_balance(owner_balance, value.try_into().unwrap())
+            .is_none()
+        {
+            return Err(self
+                ._throw_insufficient_balance(owner, allowance)
+                .try_into()
+                .unwrap());
         }
         self._update_allowance(owner, spender, allowance, value.try_into().unwrap());
         self._transfer(owner, owner_balance, to, U256::from(value));
@@ -80,27 +105,41 @@ impl IERC20 for ERC20 {
     }
 
     fn approve(&mut self, spender: Address, value: u128) -> ArbResult {
+        self._check_zero_transaction(value.try_into().unwrap()).ok_or(self._throw_zero_amount())?;
         let from: Address = self.vm().msg_sender();
+        // confirm approval is not to self
+        self._compare_addresses(from, spender).ok_or(self._throw_address_error())?;
         // check balance
-        self._check_balance(self._balance(from), value.try_into().unwrap()).ok_or(self._throw_insufficient_balance(from, value.try_into().unwrap()))?;
-        self.allowance.setter(from).setter(spender).set(value.try_into().unwrap());
+        self._check_balance(self._balance(from), value.try_into().unwrap())
+            .ok_or(self._throw_insufficient_balance(from, value.try_into().unwrap()))?;
+        self.allowance
+            .setter(from)
+            .setter(spender)
+            .set(value.try_into().unwrap());
         Ok(vec![true.into()])
     }
 }
 
 impl ERC20 {
-
     fn _throw_insufficient_balance(&self, address: Address, value: U256) -> ERC20Errors {
-        ERC20Errors::InsufficientBalance(InsufficientBalance{
+        ERC20Errors::InsufficientBalance(InsufficientBalance {
             account: address,
-            amount: value
+            amount: value,
         })
     }
 
+    fn _throw_zero_amount(&self,) -> ERC20Errors {
+        ERC20Errors::ZeroAmount(ZeroAmount{})
+    }
+
+    fn _throw_address_error(&self,) -> ERC20Errors {
+        ERC20Errors::TransferToZeroAddress(TransferToSelfOrZeroAddress {})
+    }
+
     fn _throw_insufficient_allowance(&self, spender: Address, value: U256) -> ERC20Errors {
-        ERC20Errors::InsufficientAllowance(InsufficientAllowance{
+        ERC20Errors::InsufficientAllowance(InsufficientAllowance {
             spender,
-            amount: value
+            amount: value,
         })
     }
 }
@@ -112,21 +151,42 @@ impl ERC20 {
         true
     }
 
+    fn _check_zero_transaction(&self, value: U256) -> Option<bool> {
+        if value != U256::from(0) {
+            return Some(true);
+        }
+        None
+    }
     fn _get_allowance(&self, owner: Address, spender: Address) -> U256 {
         self.allowance.get(owner).get(spender)
     }
-    fn _update_allowance(&mut self, owner: Address, spender: Address, allowance: U256, value: U256) {
-        self.allowance.setter(owner).setter(spender).set(allowance-value);
+    fn _compare_addresses(&self, user: Address, other_address: Address) -> Option<bool> {
+        if user != other_address && user != Address::from(U160::from(0)) {
+            return Some(true);
+        }
+        None
+    }
+    fn _update_allowance(
+        &mut self,
+        owner: Address,
+        spender: Address,
+        allowance: U256,
+        value: U256,
+    ) {
+        self.allowance
+            .setter(owner)
+            .setter(spender)
+            .set(allowance - value);
     }
 
     fn _check_allowance(&self, allowance: U256, amount: U256) -> Option<bool> {
-        if allowance >= amount{
+        if allowance >= amount {
             return Some(true);
         }
         None
     }
 
-    fn _check_balance(&self, balance: U256, value: U256 ) -> Option<bool> {
+    fn _check_balance(&self, balance: U256, value: U256) -> Option<bool> {
         //check balance
         if balance >= value {
             return Some(true);
@@ -136,8 +196,8 @@ impl ERC20 {
 
     fn _mint(&mut self, to: Address, value: U256) {
         let bal = self.balance.get(to);
-        self.balance.insert(to, bal+value);
-        self.total_supply.set(self.total_supply.get()+value);
+        self.balance.insert(to, bal + value);
+        self.total_supply.set(self.total_supply.get() + value);
     }
     fn _balance(&self, address: Address) -> U256 {
         self.balance.get(address)
@@ -146,68 +206,85 @@ impl ERC20 {
 
 #[cfg(test)]
 mod test {
-    // use alloy_primitives::U160;
-    // use super::*;
-    // use stylus_sdk::{testing::*, alloy_primitives::{U256, Address, }};
-    //
-    // fn create_erc20_instance() -> (ERC20, Address, TestVM) {
-    //     let vm: TestVM = TestVM::default();
-    //     let mut erc20 = ERC20::from(&vm);
-    //     erc20.init();
-    //     (erc20, vm.msg_sender(), vm)
-    // }
-    //
+    use super::*;
+    use alloc::string::ToString;
+    use alloy_primitives::U160;
+    use stylus_sdk::{alloy_primitives::Address, testing::*};
+
+    fn create_erc20_instance() -> (ERC20, Address, TestVM) {
+        let vm: TestVM = TestVM::default();
+        let mut erc20 = ERC20::from(&vm);
+        erc20
+            .init("Stylus".to_string(), "sty".to_string(), 1_000_000_000)
+            .unwrap();
+        (erc20, vm.msg_sender(), vm)
+    }
+
+    #[test]
+    fn test_get_decimals() {
+        let (erc20, owner, _) = create_erc20_instance();
+        assert_eq!(erc20.decimals(), 18);
+        assert_eq!(erc20.name(), "Stylus");
+        assert_eq!(erc20.owner.get(), owner);
+        assert_eq!(erc20.total_supply(), 1_000_000_000);
+        assert_eq!(erc20.balance_of(owner), 1_000_000_000);
+    }
+
+    #[test]
+    // #[should_panic(expected = "[110, 111, 116, 32, 114, 101, 97, 100, 121]")]
+    fn test_transfer() {
+        let (mut erc20, owner, _) = create_erc20_instance();
+        let to: Address = Address::from(U160::from(0x0000000000000000000000000000000000000001));
+
+        erc20.transfer(to, 100).unwrap();
+        assert_eq!(erc20.balance_of(owner), 999_999_900);
+        assert_eq!(erc20.balance_of(to), 100);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_transfer_error() {
+        let (mut erc20, owner, vm) = create_erc20_instance();
+        let to: Address = Address::from(U160::from(0x0000000000000000000000000000000000000001));
+        // cannot transfer to self
+        erc20.transfer(owner, 100).unwrap();
+
+        // cannot send 0
+        erc20.transfer(to, 0).unwrap();
+        // assert_eq!(erc20.balance_of(owner), 1_000_000_000);
+
+        //cannot transfer from 0 balance
+        vm.set_sender(to);
+        erc20.transfer(owner, 90).unwrap();
+    }
+
+    #[test]
+    fn test_transfer_from_and_approve() {
+        let (mut erc20, owner, vm) = create_erc20_instance();
+        let to: Address = Address::from(U160::from(0x0000000000000000000000000000000000000001));
+
+        erc20.approve(to, 100).unwrap();
+        assert_eq!(erc20.allowance(owner, to), 100);
+
+        vm.set_sender(to);
+        erc20
+            .transfer_from(owner, vm.contract_address(), 100)
+            .unwrap();
+        assert_eq!(erc20.balance_of(owner), 999_999_900);
+        assert_eq!(erc20.balance_of(vm.contract_address()), 100);
+        assert_eq!(erc20.balance_of(to), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_cannot_approve_with_insufficient_balance() {
+        let (mut erc20, owner, vm) = create_erc20_instance();
+        let to: Address = Address::from(U160::from(1));
+        vm.set_sender(to);
+        erc20.approve(owner, 100).unwrap();
+        // assert_eq!(erc20.allowance(owner, to), 100);
+    }
+
     // #[test]
-    // fn test_get_decimals() {
-    //     let (erc20, owner, _) = create_erc20_instance();
-    //     assert_eq!(erc20.decimals(), 18);
-    //     assert_eq!(erc20.name.get_string(), "Stylus");
-    //     assert_eq!(erc20.owner.get(), owner);
-    //     assert_eq!(erc20.total_supply.get(), U256::from(1_000_000_000));
-    //     assert_eq!(erc20.balance.get(owner), U256::from(1_000_000_000));
-    // }
-    //
-    // #[test]
-    // // #[should_panic(expected = "[110, 111, 116, 32, 114, 101, 97, 100, 121]")]
-    // fn test_transfer() {
-    //     let (mut erc20, owner, _) = create_erc20_instance();
-    //     let to: Address = Address::from(U160::from(0x0000000000000000000000000000000000000001));
-    //
-    //     erc20.transfer(to, U256::from(100)).unwrap();
-    //     assert_eq!(erc20.balance.get(owner), U256::from(999_999_900));
-    //     assert_eq!(erc20.balance.get(to), U256::from(100));
-    // }
-    //
-    // #[test]
-    // #[should_panic]
-    // fn test_transfer_error() {
-    //     let (mut erc20, owner, vm) = create_erc20_instance();
-    //     let to: Address = Address::from(U160::from(0x0000000000000000000000000000000000000001));
-    //     // cannot transfer to self
-    //     erc20.transfer(owner, U256::from(100)).unwrap();
-    //
-    //     // cannot send 0
-    //     // erc20.transfer(to, U256::from(0)).unwrap();
-    //     assert_eq!(erc20.balance.get(owner), U256::from(1_000_000_000));
-    //
-    //     //cannot transfer from 0 balance
-    //     vm.set_sender(to);
-    //     erc20.transfer(owner, U256::from(90)).unwrap();
-    //
-    // }
-    //
-    // #[test]
-    // fn test_transfer_from_and_approve() {
-    //     let (mut erc20, owner, vm) = create_erc20_instance();
-    //     let to: Address = Address::from(U160::from(0x0000000000000000000000000000000000000001));
-    //
-    //     erc20.approve(to, U256::from(100)).unwrap();
-    //     assert_eq!(erc20.allowance.get(owner).get(to), U256::from(100));
-    //
-    //     vm.set_sender(to);
-    //     erc20.transfer_from(owner, vm.contract_address(), U256::from(100)).unwrap();
-    //     assert_eq!(erc20.balance.get(owner), U256::from(999_999_900));
-    //     assert_eq!(erc20.balance.get(vm.contract_address()), U256::from(100));
-    //     assert_eq!(erc20.balance.get(to), U256::from(0));
-    // }
+    // fn
 }
