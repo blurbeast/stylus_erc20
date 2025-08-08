@@ -1,11 +1,25 @@
 use alloc::string::String;
 use alloc::vec::Vec;
-
+use alloy_sol_types::sol;
 use stylus_sdk::{prelude::*, alloy_primitives::{U256, Address, }, ArbResult};
 use stylus_sdk::storage::{StorageAddress, StorageMap, StorageString, StorageU256};
 
+sol!{
+    #[derive(Debug)]
+    error InsufficientBalance (address owner, uint256 value);
+}
+
+sol!(
+    #[derive(Debug)]
+    event TransferApproved(address indexed from, uint256 indexed value, address indexed to);
+);
+#[derive(SolidityError, Debug)]
+pub enum Erc20Error {
+    InsufficientBalance(InsufficientBalance),
+
+}
+
 #[storage]
-#[entrypoint]
 pub struct ERC20 {
     name: StorageString,
     symbol: StorageString,
@@ -16,7 +30,7 @@ pub struct ERC20 {
 }
 
 #[public]
-impl ERC20  {
+impl ERC20 {
 
     fn initialize(&mut self, name: String, symbol: String, value: U256) {
         self.name.set_str(name);
