@@ -17,12 +17,18 @@ pub struct ERC20 {
 
 #[public]
 impl ERC20  {
+
+    fn initialize(&mut self, name: String, symbol: String, value: U256) {
+        self.name.set_str(name);
+        self.symbol.set_str(symbol);
+        self.mint(self.vm().msg_sender(), value);
+        self.owner.set(self.vm().msg_sender());
+    }
     fn init(&mut self) {
         self.name.set_str("Stylus");
         self.symbol.set_str("STY");
         self.mint(self.vm().msg_sender(), U256::from(1_000_000_000));
         self.owner.set(self.vm().msg_sender());
-        self.total_supply.set(U256::from(1_000_000_000));
     }
     fn decimals(&self) -> u8 {
         18
@@ -48,7 +54,7 @@ impl ERC20  {
         //remove from the msg to address to
         let from = self.vm().msg_sender();
         let bal = self.balance.get(from);
-        assert!(from != to, "cannot transfer to self");
+        assert_ne!(from, to, "cannot transfer to self");
 
         assert!(bal > U256::from(0), "insufficient balance");
 
@@ -67,7 +73,7 @@ impl ERC20 {
     fn _transfer(&mut self, from: Address, bal: U256,  to: Address, value: U256) -> bool {
         self.balance.insert(from, bal-value);
         self.balance.insert(to, self.balance.get(to)+value);
-        return true;
+        true
     }
 }
 
@@ -103,7 +109,6 @@ mod test {
         erc20.transfer(to, U256::from(100)).unwrap();
         assert_eq!(erc20.balance.get(owner), U256::from(999_999_900));
         assert_eq!(erc20.balance.get(to), U256::from(100));
-        // assert_eq!(erc20.transfer(owner, U256::from(100)).unwrap(), true);
     }
 
     #[test]
@@ -136,7 +141,6 @@ mod test {
         erc20.transfer_from(owner, vm.contract_address(), U256::from(100)).unwrap();
         assert_eq!(erc20.balance.get(owner), U256::from(999_999_900));
         assert_eq!(erc20.balance.get(vm.contract_address()), U256::from(100));
-
         assert_eq!(erc20.balance.get(to), U256::from(0));
     }
 }
